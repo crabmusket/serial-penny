@@ -14,38 +14,40 @@ import System.Cmd (system)
 
 main = do
     bus <- newChan
-    serial <- openSerial "COM4" defaultSerialSettings -- TODO: set port from command-line arguments
+    serial <- openSerial "COM4" defaultSerialSettings
     reads <- forkIO $ forever $ recvLn serial >>= writeChan bus
 
     putStrLn "Press ENTER to exit."
-    let port = 10000 -- TODO: set port from command-line arguments
+    let port = 10000
     ui <- forkIO $ startGUI defaultConfig
         { tpPort = port
+        , tpStatic = Just "static"
         , tpLog  = const $ return ()
         } $ setup bus
     system $ "start \"\" \"http://localhost:" ++ show port ++ "\""
 
-    void getLine
+    discard getLine
     killThread ui
     killThread reads
     closeSerial serial
 
 setup :: Bus -> Window -> IO ()
 setup globalBus window = void $ do
-    bus <- dupChan globalBus
-
-    updateList <- UI.div #. "updates"
     return window # set title "Serial"
+    addStyleSheets window ["bootstrap.min.css", "console.css"]
+
+    console <- UI.new #. "console"
     getBody window #+
-        [ UI.h1 #+ [string "Serial thing"]
-        , element updateList
+        [ bsNavbar "fixed-top inverse" $ UI.span # set text "Serial console"
+        , bsContainer [element console]
         ]
 
-    listener <- forkIO $ getChanContents bus >>= mapM_ (addUpdate window updateList)
+    bus <- dupChan globalBus
+    listener <- forkIO $ getChanContents bus >>= mapM_ (addUpdate window console)
     on UI.disconnect window $ const $ killThread listener
 
 addUpdate w e u = atomic w $ element e #+
-    [UI.div #. "update" #+ [string $ B.unpack u]]
+    [UI.div #. "line" #+ [string $ B.unpack u]]
 
 recvLn :: SerialPort -> IO B.ByteString
 recvLn s = do
@@ -55,4 +57,14 @@ recvLn s = do
         else recvLn s
     return $ first `B.append` rest
 
+bsNavbar styles title = UI.div #. styles' #+ title' where
+    styles' = unwords $ "navbar" : (map ("navbar-" ++) $ words styles)
+    title'  = [bsContainer [UI.div #. "navbar-header" #+ [title] #. "navbar-brand"]]
+
+bsContainer contents = UI.div #. "container" #+ contents
+
 type Bus = Chan B.ByteString
+
+discard = void
+
+addStyleSheets w = mapM $ UI.addStyleSheet w
