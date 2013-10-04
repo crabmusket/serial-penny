@@ -8,14 +8,14 @@ import Control.Concurrent.Chan
     (Chan, newChan, dupChan, writeChan, getChanContents)
 
 import qualified Graphics.UI.Threepenny as UI
-import Graphics.UI.Threepenny.Core
+import Graphics.UI.Threepenny.Core hiding (text)
 
 import System.Cmd (system)
 
 main = do
-    bus <- newChan
+    bus    <- newChan
     serial <- openSerial "COM4" defaultSerialSettings
-    reads <- forkIO $ forever $ recvLn serial >>= writeChan bus
+    reads  <- forkIO $ forever $ recvLn serial >>= writeChan bus
 
     putStrLn "Press ENTER to exit."
     let port = 10000
@@ -26,21 +26,22 @@ main = do
         } $ setup bus
     system $ "start \"\" \"http://localhost:" ++ show port ++ "\""
 
-    discard getLine
+    void getLine
     killThread ui
     killThread reads
     closeSerial serial
 
+-- Sets up the UI for a session. This gets called each time a client connects
+-- to the Threepenny server.
 setup :: Bus -> Window -> IO ()
 setup globalBus window = void $ do
     return window # set title "Serial"
     addStyleSheets window ["bootstrap.min.css", "console.css"]
 
     console <- UI.new #. "console"
-    getBody window #+
-        [ bsNavbar "fixed-top inverse" $ UI.span # set text "Serial console"
-        , bsContainer [element console]
-        ]
+    connect <- mkButton "Connect"
+    navbar  <- mkNavbar "Serial console" [] $ [mkNavbarRightForm [element connect]]
+    getBody window #+ [element navbar, mkContainer [element console]]
 
     bus <- dupChan globalBus
     listener <- forkIO $ getChanContents bus >>= mapM_ (addUpdate window console)
@@ -57,14 +58,19 @@ recvLn s = do
         else recvLn s
     return $ first `B.append` rest
 
-bsNavbar styles title = UI.div #. styles' #+ title' where
-    styles' = unwords $ "navbar" : (map ("navbar-" ++) $ words styles)
-    title'  = [bsContainer [UI.div #. "navbar-header" #+ [title] #. "navbar-brand"]]
+mkNavbar title left right = UI.div #.
+    "navbar navbar-inverse navbar-fixed-top" #+
+    [mkContainer $
+        [ UI.div #. "navbar-header" #+ [UI.span # set UI.text title] #. "navbar-brand" ]
+        ++ left ++ right
+    ]
 
-bsContainer contents = UI.div #. "container" #+ contents
+mkNavbarRightForm contents = UI.div #. "navbar-form navbar-right" #+ contents
+
+mkContainer contents = UI.div #. "container" #+ contents
+
+mkButton text = UI.button #. "btn btn-success" # set UI.text text
 
 type Bus = Chan B.ByteString
-
-discard = void
 
 addStyleSheets w = mapM $ UI.addStyleSheet w
