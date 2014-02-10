@@ -1,4 +1,5 @@
 import qualified Data.ByteString.Char8 as B
+import System.Environment (getArgs)
 import System.Hardware.Serialport
     (SerialPort, openSerial, send, recv, closeSerial, defaultSerialSettings)
 
@@ -11,9 +12,11 @@ import qualified Graphics.UI.Threepenny as UI
 import Graphics.UI.Threepenny.Core hiding (text)
 
 main = do
+    args <- fmap parseArgs getArgs
+
     incoming <- newChan
     outgoing <- newChan
-    serial <- openSerial "COM4" defaultSerialSettings
+    serial <- openSerial (head args) defaultSerialSettings
     reader <- forkIO $ forever $ recvLn serial >>= writeChan incoming
     writer <- forkIO $ forever $ send serial   =<< readChan  outgoing
 
