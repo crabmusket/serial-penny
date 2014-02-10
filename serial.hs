@@ -11,9 +11,9 @@ import qualified Graphics.UI.Threepenny as UI
 import Graphics.UI.Threepenny.Core hiding (text)
 
 main = do
-    bus    <- newChan
+    incoming <- newChan
     serial <- openSerial "COM4" defaultSerialSettings
-    reads  <- forkIO $ forever $ recvLn serial >>= writeChan bus
+    reader <- forkIO $ forever $ recvLn serial >>= writeChan incoming
 
     let config = defaultConfig {
             tpPort = 10000,
@@ -22,17 +22,17 @@ main = do
          }
 
     putStrLn "Press ENTER to exit."
-    ui <- forkIO $ startGUI config $ setup bus
+    ui <- forkIO $ startGUI config $ setup incoming
     void getLine
 
     killThread ui
-    killThread reads
+    killThread reader
     closeSerial serial
 
 -- Sets up the UI for a session. This gets called each time a client connects
 -- to the Threepenny server.
 setup :: Bus -> Window -> UI ()
-setup globalBus window = void $ do
+setup incoming window = void $ do
     return window # set title "Serial"
     addStyleSheets window ["bootstrap.min.css", "console.css"]
 
@@ -41,9 +41,9 @@ setup globalBus window = void $ do
     navbar  <- mkNavbar "Serial console" [] $ [mkNavbarRightForm [element connect]]
     getBody window #+ [element navbar, mkContainer [element console]]
 
-    bus <- liftIO $ dupChan globalBus
-    listener <- liftIO $ forkIO $ getChanContents bus >>= mapM_ (addUpdate window console)
-    on UI.disconnect window $ const $ liftIO $ killThread listener
+    incoming' <- liftIO $ dupChan incoming
+    reader <- liftIO $ forkIO $ getChanContents incoming' >>= mapM_ (addUpdate window console)
+    on UI.disconnect window $ const $ liftIO $ killThread reader
 
 addUpdate w e u = atomic w $ runUI w $ element e #+
     [UI.div #. "line" #+ [string $ B.unpack u]]
