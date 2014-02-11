@@ -17,7 +17,7 @@ cabal-version:       >=1.8
 
 executable serial-penny
   ghc-options:          -O -threaded
-  main-is:              serial.hs
+  main-is:              main.hs
   -- other-modules:       
   build-depends:        threepenny-gui >= 0.4,
                         serialport >= 0.4.5,
