@@ -1,7 +1,7 @@
 import qualified Data.ByteString.Char8 as B
 import Data.Word (Word8)
 import System.Hardware.Serialport
-    (SerialPort, CommSpeed(..), Parity(..), StopBits(..),
+    (SerialPort, CommSpeed(..), Parity(..), StopBits(..), SerialPortSettings(..),
      openSerial, send, recv, closeSerial, defaultSerialSettings)
 
 import Data.List (foldl')
@@ -21,20 +21,26 @@ main = do
     args <- fmap parseArgs getArgs
     putStrLn "Using settings:"
 
-    incoming <- newChan
-    outgoing <- newChan
-    serial <- openSerial (serialPath args) defaultSerialSettings
-    reader <- forkIO $ forever $ recvLn serial >>= writeChan incoming
-    writer <- forkIO $ forever $ send   serial =<< readChan  outgoing
-
-    let config = defaultConfig {
+    let guiConfig = defaultConfig {
             tpPort = 10000,
             tpStatic = Just "static",
             tpLog  = const $ return ()
          }
+        serialConfig = defaultSerialSettings {
+            commSpeed = baud args,
+            bitsPerWord = dataSize args,
+            stopb = stopSize args,
+            parity = paren args
+         }
+
+    incoming <- newChan
+    outgoing <- newChan
+    serial <- openSerial (filePath args) serialConfig
+    reader <- forkIO $ forever $ recvLn serial >>= writeChan incoming
+    writer <- forkIO $ forever $ send   serial =<< readChan  outgoing
 
     putStrLn "Press ENTER to exit."
-    ui <- forkIO $ startGUI config $ setup incoming outgoing
+    ui <- forkIO $ startGUI guiConfig $ setup incoming outgoing
     void getLine
 
     killThread ui
@@ -49,10 +55,9 @@ setup incoming outgoing window = void $ do
     addStyleSheets window ["bootstrap.min.css", "console.css"]
 
     console <- UI.new #. "console"
-    connect <- mkButton "Connect"
-    navbar  <- mkNavbar "Serial console" [] $ [mkNavbarRightForm [element connect]]
-    input   <- UI.textarea
-    getBody window #+ [element navbar, mkContainer [element console, element input]]
+    input   <- UI.input
+    navbar  <- mkNavbar [element input]
+    getBody window #+ [element navbar, mkContainer [element console]]
 
     incoming' <- liftIO $ dupChan incoming
     reader <- liftIO $ forkIO $ forever $ readChan incoming' >>= addUpdate window console
@@ -75,12 +80,8 @@ recvLn s = do
         else recvLn s
     return $ first `B.append` rest
 
-mkNavbar title left right = UI.div #.
-    "navbar navbar-inverse navbar-fixed-top" #+
-    [mkContainer $
-        [ UI.div #. "navbar-header" #+ [UI.span # set UI.text title] #. "navbar-brand" ]
-        ++ left ++ right
-    ]
+mkNavbar contents = UI.div #. "navbar navbar-inverse navbar-fixed-top"
+                           #+ [mkContainer contents]
 
 mkNavbarRightForm contents = UI.div #. "navbar-form navbar-right" #+ contents
 
@@ -89,11 +90,11 @@ mkContainer contents = UI.div #. "container" #+ contents
 mkButton text = UI.button #. "btn btn-success" # set UI.text text
 
 data Args = Args {
-    serialPath :: FilePath,
-    stopBits   :: StopBits,
-    dataBits   :: Word8,
-    parity     :: Parity,
-    commSpeed  :: CommSpeed
+    filePath :: FilePath,
+    stopSize :: StopBits,
+    dataSize :: Word8,
+    paren    :: Parity,
+    baud     :: CommSpeed
  }
 
 defaultArgs = Args "COM1" One 8 NoParity CS9600
@@ -101,12 +102,12 @@ defaultArgs = Args "COM1" One 8 NoParity CS9600
 parseArgs :: [String] -> Args
 parseArgs = foldl' go defaultArgs
     where go acc arg
-            | isCommSpeed = acc { commSpeed = cs }
-            | isBits      = acc { stopBits = sb, dataBits = db, parity = pb }
-            | otherwise   = acc { serialPath = arg }
+            | isCommSpeed = acc { baud = bd }
+            | isBits      = acc { stopSize = sb, dataSize = db, paren = pb }
+            | otherwise   = acc { filePath = arg }
             where isCommSpeed = isJust $ maybeReadCS arg
                   isBits = arg =~ "[0-9](E|O|N)[12]" :: Bool
-                  cs = fromJust $ maybeReadCS arg
+                  bd = fromJust $ maybeReadCS arg
                   db = read [arg !! 0] :: Word8
                   pb = case (arg !! 1) of
                     'N' -> NoParity
