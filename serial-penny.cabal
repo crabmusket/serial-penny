@@ -16,7 +16,7 @@ build-type:          Simple
 cabal-version:       >=1.8
 
 executable serial-penny
-  ghc-options:          -O -threaded
+  ghc-options:          -O -threaded -Wall
   main-is:              main.hs
   -- other-modules:       
   build-depends:        threepenny-gui >= 0.4,
