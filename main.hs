@@ -44,13 +44,27 @@ main = do
     killThread ui
     killThread serialTask
 
+data Args = Args {
+    filePath :: FilePath,
+    stopSize :: StopBits,
+    dataSize :: Word8,
+    paren    :: Parity,
+    baud     :: CommSpeed
+ }
+
+defaultArgs = Args "COM4" One 8 NoParity CS9600
+
 type Bus = Chan Message
 
 data Message
     = Connect Args
+    | ConnectFailed Args Reason
     | Disconnect
+    | Disconnected
     | Received B.ByteString
     | Send B.ByteString
+
+type Reason = String
 
 serialMonitor mainBus handleRef = do
     bus <- dupChan mainBus
@@ -59,10 +73,12 @@ serialMonitor mainBus handleRef = do
 
     forever $ do
         e <- readChan bus
-        let noFileHandler :: IOException -> IO ()
-            noFileHandler e = print e >> return ()
+        let ioException :: Args -> IOException -> IO ()
+            ioException args = const $ writeChan bus
+                $ ConnectFailed args
+                $ "Could not open file " ++ filePath args
         case e of
-            Connect args -> handle noFileHandler $ do
+            Connect args -> handle (ioException args) $ do
                 serial <- openSerial (filePath args) defaultSerialSettings {
                     commSpeed = baud args,
                     bitsPerWord = dataSize args,
@@ -80,23 +96,20 @@ serialMonitor mainBus handleRef = do
                 writer <- forkIO $ forever $ do
                     ev <- readChan bus
                     case ev of
-                        Send ln -> send serial ln >> return ()
+                        Send ln -> send serial ln >> print ln
                         _ -> return ()
                 writeIORef writerRef (Just writer)
 
             Disconnect -> do
-                reader <- readIORef readerRef
-                maybeKill reader
-                writer <- readIORef writerRef
-                maybeKill writer
                 serial <- readIORef handleRef
-                maybeClose serial
-                where maybeKill t = case t of
-                        Just t' -> killThread t'
-                        Nothing -> return ()
-                      maybeClose h = case h of
-                        Just h' -> closeSerial h'
-                        Nothing -> return ()
+                case serial of
+                    Nothing -> return ()
+                    Just h  -> do
+                        closeSerial h
+                        vff killThread $ readIORef readerRef
+                        vff killThread $ readIORef writerRef
+                        writeChan bus $ Disconnected
+                        where vff x y = void (fmap (fmap x) y)
 
             _ -> return ()
 
@@ -108,30 +121,35 @@ clientSetup mainBus window = void $ do
 
     bus <- liftIO $ dupChan mainBus
 
-    console <- UI.new #. "console"
-    connect <- mkButton "Connect"
-    input   <- UI.input
-    navbar  <- mkNavbar "Serial console" [] [mkNavbarRightForm [element connect]]
+    console    <- UI.new #. "console"
+    connect    <- mkButton "success" "Connect"
+    disconnect <- mkButton "danger" "Disconnect"
+    input      <- UI.input
+    navbar     <- mkNavbar "Serial console" [] [mkNavbarRightForm [element connect, element disconnect]]
     getBody window #+ [element navbar, mkContainer [element console, element input]]
+
+    let update c u = void $ atomic window $ runUI window
+            $ element console #+ [UI.div #. "line" #. c #+ [string u]]
 
     reader <- liftIO $ forkIO $ forever $ do
         e <- readChan bus
         case e of
-            Received m -> addUpdate window console (B.unpack m) >> return ()
-            _  -> return ()
+            Received m        -> update "received" (B.unpack m)
+            ConnectFailed a r -> update "msg" r
+            Disconnected      -> update "msg" "Disconnected from serial"
+            _                 -> return ()
 
     on UI.disconnect window $ const $ liftIO $ killThread reader
 
-    on UI.click connect $ \_ -> do
+    on UI.click connect $ const $ do
         liftIO $ writeChan bus $ Connect defaultArgs
+    on UI.click disconnect $ const $ do
+        liftIO $ writeChan bus $ Disconnect
 
     on UI.sendValue input $ \content -> do
         element input # set value ""
         when (not (null content)) $ liftIO $ do
             writeChan bus (Send $ B.pack content)
-
-addUpdate w e u = atomic w $ runUI w $ element e #+
-    [UI.div #. "line" #+ [string u]]
 
 recvLn :: SerialPort -> IO B.ByteString
 recvLn s = do
@@ -152,19 +170,9 @@ mkNavbarRightForm contents = UI.div #. "navbar-form navbar-right" #+ contents
 
 mkContainer contents = UI.div #. "container" #+ contents
 
-mkButton text = UI.button #. "btn btn-success" # set UI.text text
+mkButton cls text = UI.button #. ("btn btn-" ++ cls) # set UI.text text
 
 addStyleSheets w = mapM $ UI.addStyleSheet w
-
-data Args = Args {
-    filePath :: FilePath,
-    stopSize :: StopBits,
-    dataSize :: Word8,
-    paren    :: Parity,
-    baud     :: CommSpeed
- }
-
-defaultArgs = Args "COM1" One 8 NoParity CS9600
 
 parseArgs :: [String] -> Args
 parseArgs = foldl' go defaultArgs
