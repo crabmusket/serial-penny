@@ -7,6 +7,7 @@ import System.Hardware.Serialport
 import Data.List (foldl')
 import Data.Maybe (isJust, fromJust)
 
+import System.Info (os)
 import System.Environment (getArgs)
 import Text.Regex.Posix ((=~))
 import Data.IORef (newIORef, writeIORef, readIORef)
@@ -52,7 +53,10 @@ data Args = Args {
     baud     :: CommSpeed
  }
 
-defaultArgs = Args "COM4" One 8 NoParity CS9600
+defaultArgs = Args file One 8 NoParity CS9600
+    where file = case os of
+        "mingw32" -> "COM4"
+        _         -> "/dev/ttyS0"
 
 type Bus = Chan Message
 
